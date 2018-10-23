@@ -1,3 +1,8 @@
+This is a forked version of PostgreSQL, which we are experimenting to add
+the temporal database support
+
+
+
 PostgreSQL Database Management System
 =====================================
 
