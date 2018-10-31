@@ -2552,6 +2552,7 @@ _equalColumnDef(const ColumnDef *a, const ColumnDef *b)
 	COMPARE_SCALAR_FIELD(inhcount);
 	COMPARE_SCALAR_FIELD(is_local);
 	COMPARE_SCALAR_FIELD(is_not_null);
+	COMPARE_SCALAR_FIELD(is_valid_time);
 	COMPARE_SCALAR_FIELD(is_from_type);
 	COMPARE_SCALAR_FIELD(is_from_parent);
 	COMPARE_SCALAR_FIELD(storage);

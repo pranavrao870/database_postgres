@@ -143,6 +143,9 @@ CATALOG(pg_attribute,1249,AttributeRelationId) BKI_BOOTSTRAP BKI_WITHOUT_OIDS BK
 	/* Is dropped (ie, logically invisible) or not */
 	bool		attisdropped BKI_DEFAULT(f);
 
+	/* Checks if attribute is temporal or not */
+	bool		attistemporal BKI_DEFAULT(f);
+
 	/*
 	 * This flag specifies whether this column has ever had a local
 	 * definition.  It is set for normal non-inherited columns, but also for

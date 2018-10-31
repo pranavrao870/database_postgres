@@ -687,7 +687,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	UNBOUNDED UNCOMMITTED UNENCRYPTED UNION UNIQUE UNKNOWN UNLISTEN UNLOGGED
 	UNTIL UPDATE USER USING
 
-	VACUUM VALID VALIDATE VALIDATOR VALUE_P VALUES VARCHAR VARIADIC VARYING
+	VACUUM VALID VALIDATE VALIDATOR VALIDTIME VALUE_P VALUES VARCHAR VARIADIC VARYING
 	VERBOSE VERSION_P VIEW VIEWS VOLATILE
 
 	WHEN WHERE WHITESPACE_P WINDOW WITH WITHIN WITHOUT WORK WRAPPER WRITE
@@ -3387,6 +3387,7 @@ columnDef:	ColId Typename create_generic_options ColQualList
 					n->inhcount = 0;
 					n->is_local = true;
 					n->is_not_null = false;
+					n->is_valid_time = false;
 					n->is_from_type = false;
 					n->is_from_parent = false;
 					n->storage = 0;
@@ -3395,6 +3396,27 @@ columnDef:	ColId Typename create_generic_options ColQualList
 					n->collOid = InvalidOid;
 					n->fdwoptions = $3;
 					SplitColQualList($4, &n->constraints, &n->collClause,
+									 yyscanner);
+					n->location = @1;
+					$$ = (Node *)n;
+				}
+				|	ColId Typename VALIDTIME
+				{
+					ColumnDef *n = makeNode(ColumnDef);
+					n->colname = $1;
+					n->typeName = $2;
+					n->inhcount = 0;
+					n->is_local = true;
+					n->is_not_null = true;
+					n->is_valid_time = true;
+					n->is_from_type = false;
+					n->is_from_parent = false;
+					n->storage = 0;
+					n->raw_default = NULL;
+					n->cooked_default = NULL;
+					n->collOid = InvalidOid;
+					n->fdwoptions = NIL;
+					SplitColQualList(NIL, &n->constraints, &n->collClause,
 									 yyscanner);
 					n->location = @1;
 					$$ = (Node *)n;
@@ -3409,6 +3431,7 @@ columnOptions:	ColId ColQualList
 					n->inhcount = 0;
 					n->is_local = true;
 					n->is_not_null = false;
+					n->is_valid_time = false;
 					n->is_from_type = false;
 					n->is_from_parent = false;
 					n->storage = 0;
@@ -3428,6 +3451,7 @@ columnOptions:	ColId ColQualList
 					n->inhcount = 0;
 					n->is_local = true;
 					n->is_not_null = false;
+					n->is_valid_time = false;
 					n->is_from_type = false;
 					n->is_from_parent = false;
 					n->storage = 0;
@@ -12266,6 +12290,7 @@ TableFuncElement:	ColId Typename opt_collate_clause
 					n->inhcount = 0;
 					n->is_local = true;
 					n->is_not_null = false;
+					n->is_valid_time = false;
 					n->is_from_type = false;
 					n->is_from_parent = false;
 					n->storage = 0;
@@ -15462,6 +15487,7 @@ reserved_keyword:
 			| UNIQUE
 			| USER
 			| USING
+			| VALIDTIME
 			| VARIADIC
 			| WHEN
 			| WHERE
