@@ -2873,6 +2873,7 @@ _outColumnDef(StringInfo str, const ColumnDef *node)
 	WRITE_INT_FIELD(inhcount);
 	WRITE_BOOL_FIELD(is_local);
 	WRITE_BOOL_FIELD(is_not_null);
+	WRITE_BOOL_FIELD(is_valid_time);
 	WRITE_BOOL_FIELD(is_from_type);
 	WRITE_BOOL_FIELD(is_from_parent);
 	WRITE_CHAR_FIELD(storage);

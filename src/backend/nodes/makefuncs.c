@@ -494,6 +494,7 @@ makeColumnDef(const char *colname, Oid typeOid, int32 typmod, Oid collOid)
 	n->typeName = makeTypeNameFromOid(typeOid, typmod);
 	n->inhcount = 0;
 	n->is_local = true;
+	n->is_valid_time = false;
 	n->is_not_null = false;
 	n->is_from_type = false;
 	n->is_from_parent = false;

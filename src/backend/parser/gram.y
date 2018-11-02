@@ -3400,11 +3400,12 @@ columnDef:	ColId Typename create_generic_options ColQualList
 					n->location = @1;
 					$$ = (Node *)n;
 				}
-				|	ColId Typename VALIDTIME
+				|	ColId VALIDTIME
 				{
 					ColumnDef *n = makeNode(ColumnDef);
+					char* type = "tsrange";
 					n->colname = $1;
-					n->typeName = $2;
+					n->typeName = makeTypeName(type);
 					n->inhcount = 0;
 					n->is_local = true;
 					n->is_not_null = true;

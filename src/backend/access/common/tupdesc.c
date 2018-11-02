@@ -802,6 +802,7 @@ BuildDescForRelation(List *schema)
 	natts = list_length(schema);
 	desc = CreateTemplateTupleDesc(natts, false);
 	has_not_null = false;
+	istemporal = false;
 
 	attnum = 0;
 
@@ -848,6 +849,7 @@ BuildDescForRelation(List *schema)
 		has_not_null |= entry->is_not_null;
 		att->attislocal = entry->is_local;
 		att->attinhcount = entry->inhcount;
+		att->attistemporal = false;
 
 		if(entry->is_valid_time){
 			if(istemporal){
