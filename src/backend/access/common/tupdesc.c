@@ -795,7 +795,7 @@ BuildDescForRelation(List *schema)
 	int32		atttypmod;
 	Oid			attcollation;
 	int			attdim;
-
+	bool		istemporal;
 	/*
 	 * allocate a new tuple descriptor
 	 */
@@ -848,6 +848,18 @@ BuildDescForRelation(List *schema)
 		has_not_null |= entry->is_not_null;
 		att->attislocal = entry->is_local;
 		att->attinhcount = entry->inhcount;
+
+		if(entry->is_valid_time){
+			if(istemporal){
+				// Error: A validtime attribute already exists
+				elog(ERROR,
+					"CREATE TABLE: Only one validtime attribute allowed per relation");
+			}
+			else{
+				att->attistemporal = true;
+				istemporal = true;
+			}
+		}
 	}
 
 	if (has_not_null)
