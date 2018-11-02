@@ -535,7 +535,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 
 %type <node>	TableConstraint TableLikeClause
 %type <ival>	TableLikeOptionList TableLikeOption
-%type <list>	ColQualList
+%type <list>	ColQualList TimeDefault
 %type <node>	ColConstraint ColConstraintElem ConstraintAttr
 %type <ival>	key_actions key_delete key_match key_update key_action
 %type <ival>	ConstraintAttributeSpec ConstraintAttributeElem
@@ -3400,7 +3400,7 @@ columnDef:	ColId Typename create_generic_options ColQualList
 					n->location = @1;
 					$$ = (Node *)n;
 				}
-				|	ColId VALIDTIME
+				|	ColId VALIDTIME TimeDefault
 				{
 					ColumnDef *n = makeNode(ColumnDef);
 					char* type = "tsrange";
@@ -3417,12 +3417,32 @@ columnDef:	ColId Typename create_generic_options ColQualList
 					n->cooked_default = NULL;
 					n->collOid = InvalidOid;
 					n->fdwoptions = NIL;
-					SplitColQualList(NIL, &n->constraints, &n->collClause,
+					SplitColQualList($3, &n->constraints, &n->collClause,
 									 yyscanner);
 					n->location = @1;
 					$$ = (Node *)n;
 				}
 		;
+
+TimeDefault:    DEFAULT b_expr
+				{
+					Constraint *n = makeNode(Constraint);
+					n->contype = CONSTR_DEFAULT;
+					n->location = @1;
+					n->raw_expr = $2;
+					n->cooked_expr = NULL;
+					$$ = lappend(NIL, (Node*)n);
+				}
+				| /*empty*/
+				{
+					char* d = "(,)";
+					Constraint *n = makeNode(Constraint);
+					n->contype = CONSTR_DEFAULT;
+					n->location = -1;
+					n->raw_expr = makeStringConst(d, -1);
+					n->cooked_expr = NULL;
+					$$ = lappend(NIL, (Node*)n);
+				}
 
 columnOptions:	ColId ColQualList
 				{
@@ -13374,8 +13394,7 @@ a_expr:		c_expr									{ $$ = $1; }
  * cause trouble in the places where b_expr is used.  For simplicity, we
  * just eliminate all the boolean-keyword-operator productions from b_expr.
  */
-b_expr:		c_expr
-				{ $$ = $1; }
+b_expr:		c_expr { $$ = $1; }
 			| b_expr TYPECAST Typename
 				{ $$ = makeTypeCast($1, $3, @2); }
 			| '+' b_expr					%prec UMINUS
