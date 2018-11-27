@@ -198,8 +198,8 @@ static void drop_unnamed_stmt(void);
 static void log_disconnections(int code, Datum arg);
 static void enable_statement_timeout(void);
 static void disable_statement_timeout(void);
-
-
+void removeTempCols(Node * quals, List * var_list);
+int find_cte(List * cteList, char * name);
 /* ----------------------------------------------------------------
  *		routines to obtain user input
  * ----------------------------------------------------------------
@@ -1157,12 +1157,12 @@ handle_temporal_joins(List *querytrees)
 
 	foreach(query_list, querytrees)
 	{
-		Node       *final_opexpr;
+		Node       *final_opexpr = (Node *) makeNode(OpExpr);
 		TargetEntry * tentry;
 		int var_i = 0;
 		Query	*query = lfirst_node(Query, query_list);
 		var_list = handle_temporal_helper(query, -1);
-		if(query->commandType == CMD_SELECT && length(var_list) != 0){
+		if(query->commandType == CMD_SELECT && var_list->length != 0){
 			foreach(var_item, var_list){
 				var_i++;
 				if(var_i == 1){
@@ -1194,7 +1194,7 @@ handle_temporal_joins(List *querytrees)
 			tentry->resorigtbl = 0;
 			tentry->resorigcol = 0;
 			tentry->resjunk = false;
-			tentry->resno = length(query->targetList) + 1;
+			tentry->resno = query->targetList->length + 1;
 			lappend(query->targetList, tentry);
 		}
 		modified_query_list = lappend(modified_query_list, query);
@@ -1408,7 +1408,6 @@ exec_simple_query(const char *query_string)
 
 		querytree_list = pg_analyze_and_rewrite(parsetree, query_string,
 												NULL, 0, NULL);
-		print(querytree_list);
 
 		temporal_handled_list = handle_temporal_joins(querytree_list);
 
