@@ -915,6 +915,55 @@ pg_plan_query(Query *querytree, int cursorOptions, ParamListInfo boundParams)
 }
 
 void
+removeTempCols(Node * quals, List * var_list)
+{
+	if(quals == NULL){
+		return;
+	}
+	else if(IsA(quals, Var)){
+		return;
+	}
+	else if(IsA(quals, OpExpr)){
+		OpExpr * op = (OpExpr *)quals;
+		if(op->opno == 3882 && op->opfuncid == 3855){
+			List * args = op->args;
+			if(args->length == 2){
+				if(IsA(linitial(args), Var) && IsA(lsecond(args), Var)){
+					Var * left = (Var *) linitial(args);
+					Var * right = (Var *) lsecond(args);
+					int lfound = 0;
+					int rfound = 0;
+					ListCell * var_item;
+					foreach(var_item, var_list){
+						Var * var = lfirst_node(Var, var_item);
+						if(var->varno == left->varno && var->varattno && left->varattno){
+							lfound = 1;
+						}
+						if(var->varno == right->varno && var->varattno && right->varattno){
+							rfound = 1;
+						}
+						if(lfound == 1 && rfound == 1){
+							*right = *left;
+							break;
+						}
+					}
+				}
+			}
+		}
+
+	}
+	else if(IsA(quals, BoolExpr)){
+		BoolExpr * boolExpr = (BoolExpr *) quals;
+		ListCell * item;
+		foreach(item, boolExpr->args){
+			Node * q = lfirst(item);
+			removeTempCols(q, var_list);
+		}
+	}
+	return;
+}
+
+void
 getTemporalAttrHelper(Node *rte, Query *query, List **var_list)
 {
 	int natts, varattno;
@@ -955,6 +1004,12 @@ getTemporalAttrHelper(Node *rte, Query *query, List **var_list)
 		JoinExpr * rteref = (JoinExpr *) rte;
 		getTemporalAttrHelper(rteref->larg, query, var_list);
 		getTemporalAttrHelper(rteref->rarg, query, var_list);
+
+		if(rteref->isNatural){
+			removeTempCols(rteref->quals, *var_list);
+		}
+
+
 		return;
 	}
 }
@@ -1287,6 +1342,7 @@ exec_simple_query(const char *query_string)
 												NULL, 0, NULL);
 
 		temporal_handled_list = handle_temporal_joins(querytree_list);
+
 		plantree_list = pg_plan_queries(temporal_handled_list,
 										CURSOR_OPT_PARALLEL_OK, NULL);
 
