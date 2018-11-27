@@ -914,6 +914,23 @@ pg_plan_query(Query *querytree, int cursorOptions, ParamListInfo boundParams)
 	return plan;
 }
 
+int
+find_cte(List * cteList, char * name)
+{
+	int ret;
+	CommonTableExpr * cte;
+	ListCell * ctecell;
+	ret = 0;
+	foreach(ctecell, cteList){
+		cte = lfirst_node(CommonTableExpr, ctecell);
+		if(strcmp(name, cte->ctename) == 0){
+			return ret; 
+		}
+		ret++;
+	}
+	return -1;
+}
+
 void
 removeTempCols(Node * quals, List * var_list)
 {
@@ -993,6 +1010,16 @@ getTemporalAttrHelper(Node *rte, Query *query, List **var_list)
 		}
 		else if (rtentry->rtekind == RTE_SUBQUERY){
 			List * ret_var_list = handle_temporal_helper(rtentry->subquery, rteref->rtindex);
+			ListCell * ret_var_cell;
+			foreach(ret_var_cell, ret_var_list){
+				*var_list = lappend(*var_list, lfirst(ret_var_cell));
+			}
+			return;
+		}
+		else if (rtentry->rtekind == RTE_CTE){
+			int position = find_cte(query->cteList, rtentry->ctename);
+			CommonTableExpr * ctentry = castNode(CommonTableExpr, list_nth(query->cteList, position));
+			List * ret_var_list = handle_temporal_helper((Query*) ctentry->ctequery, rteref->rtindex);
 			ListCell * ret_var_cell;
 			foreach(ret_var_cell, ret_var_list){
 				*var_list = lappend(*var_list, lfirst(ret_var_cell));
@@ -1095,7 +1122,7 @@ handle_temporal_helper(Query * query, int index)
 
 	/* Now seeing the target list and returning the appropriate temporal cols man */
 	if(index == -1){
-		return NULL;
+		return var_list;
 	}
 
 	target_num = 1;
@@ -1122,13 +1149,54 @@ handle_temporal_helper(Query * query, int index)
 List *
 handle_temporal_joins(List *querytrees)
 {
+	ListCell   *var_item;
+	List 	   *var_list;
+	List 	   *args_list;
 	List	   *modified_query_list = NIL;
 	ListCell   *query_list;
 
 	foreach(query_list, querytrees)
 	{
+		Node       *final_opexpr;
+		TargetEntry * tentry;
+		int var_i = 0;
 		Query	*query = lfirst_node(Query, query_list);
-		handle_temporal_helper(query, -1);
+		var_list = handle_temporal_helper(query, -1);
+		if(query->commandType == CMD_SELECT && length(var_list) != 0){
+			foreach(var_item, var_list){
+				var_i++;
+				if(var_i == 1){
+					final_opexpr = (Node *) lfirst_node(Var, var_item);
+				}
+				else{
+					OpExpr	*op = makeNode(OpExpr);
+					op->opno = 3900;
+					op->opfuncid = 3868;
+					op->opresulttype = 3908;
+					op->opretset = false;
+					op->opcollid = 0;
+					op->inputcollid = 0;
+					op->location = -1;
+					args_list = NIL;
+					if(var_i == 2)
+						args_list = lappend(args_list, castNode(Var, final_opexpr));
+					else
+						args_list = lappend(args_list, castNode(OpExpr, final_opexpr));
+					args_list = lappend(args_list, lfirst_node(Var, var_item));
+					op->args= args_list;
+					final_opexpr = (Node *) op;
+				}
+			}
+			tentry = (TargetEntry*)makeNode(TargetEntry);
+			tentry->expr = (Expr*)final_opexpr;
+			tentry->resname = "Intersection";
+			tentry->ressortgroupref = 0;
+			tentry->resorigtbl = 0;
+			tentry->resorigcol = 0;
+			tentry->resjunk = false;
+			tentry->resno = length(query->targetList) + 1;
+			lappend(query->targetList, tentry);
+		}
 		modified_query_list = lappend(modified_query_list, query);
 	}
 	return modified_query_list;
@@ -1340,6 +1408,7 @@ exec_simple_query(const char *query_string)
 
 		querytree_list = pg_analyze_and_rewrite(parsetree, query_string,
 												NULL, 0, NULL);
+		print(querytree_list);
 
 		temporal_handled_list = handle_temporal_joins(querytree_list);
 
