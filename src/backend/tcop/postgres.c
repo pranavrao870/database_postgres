@@ -48,6 +48,7 @@
 #include "libpq/pqformat.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
+#include "nodes/nodes.h"
 #include "nodes/print.h"
 #include "nodes/makefuncs.h"
 #include "optimizer/planner.h"
@@ -921,7 +922,7 @@ getTemporalAttrHelper(Node *rte, Query *query, List **var_list)
 	TupleDesc tupledesc;
 	Relation	rel;
 	RangeTblEntry * rtentry;
-	// RangeTblRef * rteref;
+
 	if(IsA(rte, RangeTblRef)){
 		RangeTblRef * rteref = castNode(RangeTblRef, rte);
 		rtentry = castNode(RangeTblEntry, list_nth(query->rtable, rteref->rtindex - 1));
@@ -945,13 +946,13 @@ getTemporalAttrHelper(Node *rte, Query *query, List **var_list)
 			List * ret_var_list = handle_temporal_helper(rtentry->subquery, rteref->rtindex);
 			ListCell * ret_var_cell;
 			foreach(ret_var_cell, ret_var_list){
-				lappend(*var_list, lfirst(ret_var_cell));
+				*var_list = lappend(*var_list, lfirst(ret_var_cell));
 			}
 			return;
 		}
 	}
 	else if(IsA(rte, JoinExpr)){
-		JoinExpr * rteref = castNode(JoinExpr, rte);
+		JoinExpr * rteref = (JoinExpr *) rte;
 		getTemporalAttrHelper(rteref->larg, query, var_list);
 		getTemporalAttrHelper(rteref->rarg, query, var_list);
 		return;
@@ -984,6 +985,9 @@ handle_temporal_helper(Query * query, int index)
 	if(query == NULL)
 		return NULL;
 	jointree = query->jointree;
+	if(jointree == NULL){
+		return NULL;
+	}
 	fromlist = jointree->fromlist;
 
 	foreach(rte, fromlist){
@@ -1044,12 +1048,14 @@ handle_temporal_helper(Query * query, int index)
 	target_list = query->targetList;
 	foreach(target_list_cell, target_list){
 		foreach(var_cell, var_list){
-			Var * target_var = lfirst_node(Var, target_list_cell);
-			Var * ret_var = lfirst_node(Var, var_cell);
-			if((target_var->varno == ret_var->varno) && (target_var->varattno == ret_var->varattno)){
+			TargetEntry * target_var = lfirst(target_list_cell);
+			Var * expr = (Var *) target_var->expr;
+			Var * ret_var = (Var *) copyObjectImpl((void *) lfirst( var_cell));
+
+			if((expr->varno == ret_var->varno) && (expr->varattno == ret_var->varattno)){
 				ret_var->varno = index;
 				ret_var->varattno = target_num;
-				lappend(ret_var_list, ret_var);
+				ret_var_list = lappend(ret_var_list, ret_var);
 			}
 		}
 		target_num ++ ;
@@ -1067,7 +1073,6 @@ handle_temporal_joins(List *querytrees)
 	foreach(query_list, querytrees)
 	{
 		Query	*query = lfirst_node(Query, query_list);
-
 		handle_temporal_helper(query, -1);
 		modified_query_list = lappend(modified_query_list, query);
 	}
@@ -1113,9 +1118,6 @@ pg_plan_queries(List *querytrees, int cursorOptions, ParamListInfo boundParams)
 
 	return stmt_list;
 }
-
-
-
 
 
 /*
@@ -1285,7 +1287,6 @@ exec_simple_query(const char *query_string)
 												NULL, 0, NULL);
 
 		temporal_handled_list = handle_temporal_joins(querytree_list);
-
 		plantree_list = pg_plan_queries(temporal_handled_list,
 										CURSOR_OPT_PARALLEL_OK, NULL);
 
