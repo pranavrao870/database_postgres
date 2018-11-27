@@ -49,6 +49,7 @@
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "nodes/print.h"
+#include "nodes/makefuncs.h"
 #include "optimizer/planner.h"
 #include "pgstat.h"
 #include "pg_trace.h"
@@ -74,6 +75,7 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
+#include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
@@ -923,15 +925,13 @@ getTemporalAttributesList(Query * query)
 	RangeTblEntry * rtentry;
 	Relation	rel;
 	Var * var;
-	int natts;
 	int varattno;
-	TupleDesc tupledesc;
 	int rte_i;
-	var_list = new_list(T_Var);
+	var_list = NIL;
 	if(query == NULL)
 		return NULL;
 	jointree = query->jointree;
-	List * fromlist = jointree->fromlist;
+	fromlist = jointree->fromlist;
 
 	rte_i = 1;
 	foreach(rte, fromlist){
@@ -940,12 +940,10 @@ getTemporalAttributesList(Query * query)
 			rtentry = castNode(RangeTblEntry, list_nth(query->rtable, rteref->rtindex));
 			if(rtentry->rtekind == RTE_RELATION){
 				rel = relation_open(rtentry->relid, AccessShareLock);
-				tupledesc = rel->rd_att;
-				natts = rel->rd_att->natts;
 
-				for (varattno = 0; varattno < natts; varattno++)
+				for (varattno = 0; varattno < rel->rd_att->natts; varattno++)
 				{
-					Form_pg_attribute attr = TupleDescAttr(tupledesc, varattno);
+					Form_pg_attribute attr = TupleDescAttr(rel->rd_att, varattno);
 					if(attr->attistemporal){
 						var = makeVar(rte_i, attr->attnum, attr->atttypid, attr->atttypmod,
 								attr->attcollation, 0);
@@ -972,7 +970,12 @@ handle_temporal_joins(List *querytrees)
 	ListCell   *query_list;
 	ListCell   *var_item;
 	Node		*final_opexpr;
+	List		*args_list;
+	List * args;
+	FuncExpr* isempty;
+	BoolExpr* isnotempty;
 	int var_i;
+	final_opexpr = (Node*) makeNode(OpExpr);
 	foreach(query_list, querytrees)
 	{
 		Query	* modified_query;
@@ -984,7 +987,7 @@ handle_temporal_joins(List *querytrees)
 		foreach(var_item, var_list){
 			var_i++;
 			if(var_i == 1){
-				final_opexpr = lfirst_node(Var, var_item);
+				final_opexpr = (Node *) lfirst_node(Var, var_item);
 			}
 
 			else{
@@ -997,27 +1000,42 @@ handle_temporal_joins(List *querytrees)
 				op->opcollid = 0;
 				op->inputcollid = 0;
 				op->location = -1;
-				List		*args_list;
+				args_list = NIL;
 				if(var_i == 2)
 					args_list = lappend(args_list, castNode(Var, final_opexpr));
 				else
 					args_list = lappend(args_list, castNode(OpExpr, final_opexpr));
 				args_list = lappend(args_list, lfirst_node(Var, var_item));
 				op->args= args_list;
-				final_opexpr = op;
+				final_opexpr = (Node *) op;
 
 			}
 		}
 
-		Expr		xpr;
-			Oid			opno;			/* PG_OPERATOR OID of the operator */
-			Oid			opfuncid;		/* PG_PROC OID of underlying function */
-			Oid			opresulttype;	/* PG_TYPE OID of result value */
-			bool		opretset;		/* true if operator returns set */
-			Oid			opcollid;		/* OID of collation of result */
-			Oid			inputcollid;	/* OID of collation that operator should use */
-			List	   *args;			/* arguments to the operator (1 or 2) */
-			int			location;		/* token location, or -1 if unknown */
+		if(var_i <= 1)
+			continue;
+
+		else{
+			args = NIL;
+			args = lappend(args, final_opexpr);
+			isempty = makeFuncExpr(3850, 16, args,
+						 0, 0, COERCE_EXPLICIT_CALL);
+			args = list_delete_first(args);
+			args = lappend(args, isempty);
+			isnotempty = (BoolExpr *) makeBoolExpr(NOT_EXPR, args, -1);
+			args = list_delete_first(args);
+			if(query->jointree->quals == NULL){
+				query->jointree->quals = (Node *) isnotempty;
+			}
+			else{
+				args = lappend(args, isnotempty);
+				args = lappend(args, query->jointree->quals);
+				query->jointree->quals = (Node *) makeBoolExpr(AND_EXPR, args, -1);
+
+			}
+
+		}
+
 
 
 		modified_query = query;
