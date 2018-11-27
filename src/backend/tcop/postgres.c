@@ -911,6 +911,122 @@ pg_plan_query(Query *querytree, int cursorOptions, ParamListInfo boundParams)
 	return plan;
 }
 
+
+List *
+getTemporalAttributesList(Query * query)
+{
+	FromExpr * jointree;
+	List * fromlist;
+	List * var_list;
+	ListCell * rte;
+	RangeTblRef * rteref;
+	RangeTblEntry * rtentry;
+	Relation	rel;
+	Var * var;
+	int natts;
+	int varattno;
+	TupleDesc tupledesc;
+	int rte_i;
+	var_list = new_list(T_Var);
+	if(query == NULL)
+		return NULL;
+	jointree = query->jointree;
+	List * fromlist = jointree->fromlist;
+
+	rte_i = 1;
+	foreach(rte, fromlist){
+		if(IsA(lfirst(rte), RangeTblRef)){
+			rteref = lfirst_node(RangeTblRef,rte);
+			rtentry = castNode(RangeTblEntry, list_nth(query->rtable, rteref->rtindex));
+			if(rtentry->rtekind == RTE_RELATION){
+				rel = relation_open(rtentry->relid, AccessShareLock);
+				tupledesc = rel->rd_att;
+				natts = rel->rd_att->natts;
+
+				for (varattno = 0; varattno < natts; varattno++)
+				{
+					Form_pg_attribute attr = TupleDescAttr(tupledesc, varattno);
+					if(attr->attistemporal){
+						var = makeVar(rte_i, attr->attnum, attr->atttypid, attr->atttypmod,
+								attr->attcollation, 0);
+						var_list = lappend(var_list, var);
+					}
+				}
+				relation_close(rel, AccessShareLock);
+			}
+			else{
+
+			}
+		}
+		rte_i ++;
+	}
+
+	return NULL;
+}
+
+
+List *
+handle_temporal_joins(List *querytrees)
+{
+	List	   *modified_query_list = NIL;
+	ListCell   *query_list;
+	ListCell   *var_item;
+	Node		*final_opexpr;
+	int var_i;
+	foreach(query_list, querytrees)
+	{
+		Query	* modified_query;
+		Query	*query = lfirst_node(Query, query_list);
+
+		List * var_list = getTemporalAttributesList(query);
+		var_i = 0;
+
+		foreach(var_item, var_list){
+			var_i++;
+			if(var_i == 1){
+				final_opexpr = lfirst_node(Var, var_item);
+			}
+
+			else{
+
+				OpExpr	*op = makeNode(OpExpr);
+				op->opno = 3900;
+				op->opfuncid = 3868;
+				op->opresulttype = 3908;
+				op->opretset = false;
+				op->opcollid = 0;
+				op->inputcollid = 0;
+				op->location = -1;
+				List		*args_list;
+				if(var_i == 2)
+					args_list = lappend(args_list, castNode(Var, final_opexpr));
+				else
+					args_list = lappend(args_list, castNode(OpExpr, final_opexpr));
+				args_list = lappend(args_list, lfirst_node(Var, var_item));
+				op->args= args_list;
+				final_opexpr = op;
+
+			}
+		}
+
+		Expr		xpr;
+			Oid			opno;			/* PG_OPERATOR OID of the operator */
+			Oid			opfuncid;		/* PG_PROC OID of underlying function */
+			Oid			opresulttype;	/* PG_TYPE OID of result value */
+			bool		opretset;		/* true if operator returns set */
+			Oid			opcollid;		/* OID of collation of result */
+			Oid			inputcollid;	/* OID of collation that operator should use */
+			List	   *args;			/* arguments to the operator (1 or 2) */
+			int			location;		/* token location, or -1 if unknown */
+
+
+		modified_query = query;
+
+		modified_query_list = lappend(modified_query_list, modified_query);
+	}
+	return modified_query_list;
+}
+
 /*
  * Generate plans for a list of already-rewritten queries.
  *
@@ -950,6 +1066,9 @@ pg_plan_queries(List *querytrees, int cursorOptions, ParamListInfo boundParams)
 
 	return stmt_list;
 }
+
+
+
 
 
 /*
@@ -1048,7 +1167,8 @@ exec_simple_query(const char *query_string)
 		const char *commandTag;
 		char		completionTag[COMPLETION_TAG_BUFSIZE];
 		List	   *querytree_list,
-				   *plantree_list;
+				   *plantree_list,
+				   *temporal_handled_list;
 		Portal		portal;
 		DestReceiver *receiver;
 		int16		format;
@@ -1117,7 +1237,9 @@ exec_simple_query(const char *query_string)
 		querytree_list = pg_analyze_and_rewrite(parsetree, query_string,
 												NULL, 0, NULL);
 
-		plantree_list = pg_plan_queries(querytree_list,
+		temporal_handled_list = handle_temporal_joins(querytree_list);
+
+		plantree_list = pg_plan_queries(temporal_handled_list,
 										CURSOR_OPT_PARALLEL_OK, NULL);
 
 		/* Done with the snapshot used for parsing/planning */
