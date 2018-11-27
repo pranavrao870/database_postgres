@@ -674,7 +674,7 @@ pg_analyze_and_rewrite(RawStmt *parsetree, const char *query_string,
 	query = parse_analyze(parsetree, query_string, paramTypes, numParams,
 						  queryEnv);
 
-		if (log_parser_stats)
+	if (log_parser_stats)
 		ShowUsage("PARSE ANALYSIS STATISTICS");
 
 	/*
@@ -913,53 +913,148 @@ pg_plan_query(Query *querytree, int cursorOptions, ParamListInfo boundParams)
 	return plan;
 }
 
+void
+getTemporalAttrHelper(Node *rte, Query *query, List **var_list)
+{
+	int natts, varattno;
+	Var * var;
+	TupleDesc tupledesc;
+	Relation	rel;
+	RangeTblEntry * rtentry;
+	// RangeTblRef * rteref;
+	if(IsA(rte, RangeTblRef)){
+		RangeTblRef * rteref = castNode(RangeTblRef, rte);
+		rtentry = castNode(RangeTblEntry, list_nth(query->rtable, rteref->rtindex - 1));
+		if(rtentry->rtekind == RTE_RELATION){
+			rel = relation_open(rtentry->relid, AccessShareLock);
+			tupledesc = rel->rd_att;
+			natts = rel->rd_att->natts;
+			for (varattno = 0; varattno < natts; varattno++)
+			{
+				Form_pg_attribute attr = TupleDescAttr(tupledesc, varattno);
+				if(attr->attistemporal){
+					var = makeVar(rteref->rtindex, attr->attnum, attr->atttypid, attr->atttypmod,
+							attr->attcollation, 0);
+					*var_list = lappend(*var_list, var);
+				}
+			}
+			relation_close(rel, AccessShareLock);
+			return;
+		}
+		else if (rtentry->rtekind == RTE_SUBQUERY){
+			List * ret_var_list = handle_temporal_helper(rtentry->subquery, rteref->rtindex);
+			ListCell * ret_var_cell;
+			foreach(ret_var_cell, ret_var_list){
+				lappend(*var_list, lfirst(ret_var_cell));
+			}
+			return;
+		}
+	}
+	else if(IsA(rte, JoinExpr)){
+		JoinExpr * rteref = castNode(JoinExpr, rte);
+		getTemporalAttrHelper(rteref->larg, query, var_list);
+		getTemporalAttrHelper(rteref->rarg, query, var_list);
+		return;
+	}
+}
 
 List *
-getTemporalAttributesList(Query * query)
+handle_temporal_helper(Query * query, int index)
 {
 	FromExpr * jointree;
 	List * fromlist;
 	List * var_list;
+	List * ret_var_list;
+	List * target_list;
 	ListCell * rte;
-	RangeTblRef * rteref;
-	RangeTblEntry * rtentry;
-	Relation	rel;
-	Var * var;
-	int varattno;
-	int rte_i;
+	ListCell * target_list_cell;
+	ListCell * var_cell;
+	ListCell * var_item;
+	List * args_list;
+    List * args;
+    FuncExpr* isempty;
+    BoolExpr* isnotempty;
+	int target_num;
+
+    Node * final_opexpr = (Node*) makeNode(OpExpr);
+
+	int var_i = 0;
 	var_list = NIL;
+	ret_var_list = NIL;
 	if(query == NULL)
 		return NULL;
 	jointree = query->jointree;
 	fromlist = jointree->fromlist;
 
-	rte_i = 1;
 	foreach(rte, fromlist){
-		if(IsA(lfirst(rte), RangeTblRef)){
-			rteref = lfirst_node(RangeTblRef,rte);
-			rtentry = castNode(RangeTblEntry, list_nth(query->rtable, rteref->rtindex - 1));
-			if(rtentry->rtekind == RTE_RELATION){
-				rel = relation_open(rtentry->relid, AccessShareLock);
-
-				for (varattno = 0; varattno < rel->rd_att->natts; varattno++)
-				{
-					Form_pg_attribute attr = TupleDescAttr(rel->rd_att, varattno);
-					if(attr->attistemporal){
-						var = makeVar(rteref->rtindex, attr->attnum, attr->atttypid, attr->atttypmod,
-								attr->attcollation, 0);
-						var_list = lappend(var_list, var);
-					}
-				}
-				relation_close(rel, AccessShareLock);
-			}
-			else{
-
-			}
-		}
-		rte_i ++;
+		getTemporalAttrHelper(lfirst(rte), query, &var_list);
 	}
 
-	return var_list;
+	/* Add to the quals in the fromlist here */
+	foreach(var_item, var_list){
+		var_i++;
+		if(var_i == 1){
+			final_opexpr = (Node *) lfirst_node(Var, var_item);
+		}
+		else{
+			OpExpr	*op = makeNode(OpExpr);
+			op->opno = 3900;
+			op->opfuncid = 3868;
+			op->opresulttype = 3908;
+			op->opretset = false;
+			op->opcollid = 0;
+			op->inputcollid = 0;
+			op->location = -1;
+			args_list = NIL;
+			if(var_i == 2)
+				args_list = lappend(args_list, castNode(Var, final_opexpr));
+			else
+				args_list = lappend(args_list, castNode(OpExpr, final_opexpr));
+			args_list = lappend(args_list, lfirst_node(Var, var_item));
+			op->args= args_list;
+			final_opexpr = (Node *) op;
+		}
+	}
+	if(var_i > 1) {
+		args = NIL;
+		args = lappend(args, final_opexpr);
+		isempty = makeFuncExpr(3850, 16, args,
+					 0, 0, COERCE_EXPLICIT_CALL);
+		args = NIL;
+		args = lappend(args, isempty);
+		isnotempty = (BoolExpr *) makeBoolExpr(NOT_EXPR, args, -1);
+		args = NIL;
+		if(query->jointree->quals == NULL){
+			query->jointree->quals = (Node *) isnotempty;
+		}
+		else{
+			args = lappend(args, isnotempty);
+			args = lappend(args, query->jointree->quals);
+			query->jointree->quals = (Node *) makeBoolExpr(AND_EXPR, args, -1);
+		}
+	}
+
+	/* Now seeing the target list and returning the appropriate temporal cols man */
+	if(index == -1){
+		return NULL;
+	}
+
+	target_num = 1;
+
+	target_list = query->targetList;
+	foreach(target_list_cell, target_list){
+		foreach(var_cell, var_list){
+			Var * target_var = lfirst_node(Var, target_list_cell);
+			Var * ret_var = lfirst_node(Var, var_cell);
+			if((target_var->varno == ret_var->varno) && (target_var->varattno == ret_var->varattno)){
+				ret_var->varno = index;
+				ret_var->varattno = target_num;
+				lappend(ret_var_list, ret_var);
+			}
+		}
+		target_num ++ ;
+	}
+	return ret_var_list;
 }
 
 
@@ -968,74 +1063,13 @@ handle_temporal_joins(List *querytrees)
 {
 	List	   *modified_query_list = NIL;
 	ListCell   *query_list;
-	ListCell   *var_item;
-	Node		*final_opexpr;
-	List		*args_list;
-	List		*var_list;
-	List * args;
-	FuncExpr* isempty;
-	BoolExpr* isnotempty;
-	int var_i;
-	final_opexpr = (Node*) makeNode(OpExpr);
+
 	foreach(query_list, querytrees)
 	{
-		Query	* modified_query;
 		Query	*query = lfirst_node(Query, query_list);
-		var_list = getTemporalAttributesList(query);
-		var_i = 0;
 
-		foreach(var_item, var_list){
-
-			var_i++;
-			if(var_i == 1){
-				final_opexpr = (Node *) lfirst_node(Var, var_item);
-			}
-
-			else{
-
-				OpExpr	*op = makeNode(OpExpr);
-				op->opno = 3900;
-				op->opfuncid = 3868;
-				op->opresulttype = 3908;
-				op->opretset = false;
-				op->opcollid = 0;
-				op->inputcollid = 0;
-				op->location = -1;
-				args_list = NIL;
-				if(var_i == 2)
-					args_list = lappend(args_list, castNode(Var, final_opexpr));
-				else
-					args_list = lappend(args_list, castNode(OpExpr, final_opexpr));
-				args_list = lappend(args_list, lfirst_node(Var, var_item));
-				op->args= args_list;
-				final_opexpr = (Node *) op;
-
-			}
-		}
-		if(var_i > 1) {
-			args = NIL;
-			args = lappend(args, final_opexpr);
-			isempty = makeFuncExpr(3850, 16, args,
-						 0, 0, COERCE_EXPLICIT_CALL);
-			args = NIL;
-			args = lappend(args, isempty);
-			isnotempty = (BoolExpr *) makeBoolExpr(NOT_EXPR, args, -1);
-			args = NIL;
-			if(query->jointree->quals == NULL){
-				query->jointree->quals = (Node *) isnotempty;
-			}
-			else{
-				args = lappend(args, isnotempty);
-				args = lappend(args, query->jointree->quals);
-				query->jointree->quals = (Node *) makeBoolExpr(AND_EXPR, args, -1);
-
-			}
-
-		}
-
-		modified_query = query;
-
-		modified_query_list = lappend(modified_query_list, modified_query);
+		handle_temporal_helper(query, -1);
+		modified_query_list = lappend(modified_query_list, query);
 	}
 	return modified_query_list;
 }

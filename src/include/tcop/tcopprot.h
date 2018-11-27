@@ -61,7 +61,9 @@ extern PlannedStmt *pg_plan_query(Query *querytree, int cursorOptions,
 			  ParamListInfo boundParams);
 extern List *pg_plan_queries(List *querytrees, int cursorOptions,
 				ParamListInfo boundParams);
-extern List * getTemporalAttributesList(Query * query);
+extern void getTemporalAttrHelper(Node *rte, Query *query, List **var_list);
+extern List * handle_temporal_helper(Query * query, int index);
+extern List * handle_temporal_joins(List *querytrees);
 extern List * handle_temporal_joins(List *querytrees);
 
 extern bool check_max_stack_depth(int *newval, void **extra, GucSource source);
