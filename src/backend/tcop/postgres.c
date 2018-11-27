@@ -674,7 +674,7 @@ pg_analyze_and_rewrite(RawStmt *parsetree, const char *query_string,
 	query = parse_analyze(parsetree, query_string, paramTypes, numParams,
 						  queryEnv);
 
-	if (log_parser_stats)
+		if (log_parser_stats)
 		ShowUsage("PARSE ANALYSIS STATISTICS");
 
 	/*
@@ -937,7 +937,7 @@ getTemporalAttributesList(Query * query)
 	foreach(rte, fromlist){
 		if(IsA(lfirst(rte), RangeTblRef)){
 			rteref = lfirst_node(RangeTblRef,rte);
-			rtentry = castNode(RangeTblEntry, list_nth(query->rtable, rteref->rtindex));
+			rtentry = castNode(RangeTblEntry, list_nth(query->rtable, rteref->rtindex - 1));
 			if(rtentry->rtekind == RTE_RELATION){
 				rel = relation_open(rtentry->relid, AccessShareLock);
 
@@ -945,7 +945,7 @@ getTemporalAttributesList(Query * query)
 				{
 					Form_pg_attribute attr = TupleDescAttr(rel->rd_att, varattno);
 					if(attr->attistemporal){
-						var = makeVar(rte_i, attr->attnum, attr->atttypid, attr->atttypmod,
+						var = makeVar(rteref->rtindex, attr->attnum, attr->atttypid, attr->atttypmod,
 								attr->attcollation, 0);
 						var_list = lappend(var_list, var);
 					}
@@ -959,7 +959,7 @@ getTemporalAttributesList(Query * query)
 		rte_i ++;
 	}
 
-	return NULL;
+	return var_list;
 }
 
 
@@ -971,6 +971,7 @@ handle_temporal_joins(List *querytrees)
 	ListCell   *var_item;
 	Node		*final_opexpr;
 	List		*args_list;
+	List		*var_list;
 	List * args;
 	FuncExpr* isempty;
 	BoolExpr* isnotempty;
@@ -980,11 +981,11 @@ handle_temporal_joins(List *querytrees)
 	{
 		Query	* modified_query;
 		Query	*query = lfirst_node(Query, query_list);
-
-		List * var_list = getTemporalAttributesList(query);
+		var_list = getTemporalAttributesList(query);
 		var_i = 0;
 
 		foreach(var_item, var_list){
+
 			var_i++;
 			if(var_i == 1){
 				final_opexpr = (Node *) lfirst_node(Var, var_item);
@@ -1011,19 +1012,15 @@ handle_temporal_joins(List *querytrees)
 
 			}
 		}
-
-		if(var_i <= 1)
-			continue;
-
-		else{
+		if(var_i > 1) {
 			args = NIL;
 			args = lappend(args, final_opexpr);
 			isempty = makeFuncExpr(3850, 16, args,
 						 0, 0, COERCE_EXPLICIT_CALL);
-			args = list_delete_first(args);
+			args = NIL;
 			args = lappend(args, isempty);
 			isnotempty = (BoolExpr *) makeBoolExpr(NOT_EXPR, args, -1);
-			args = list_delete_first(args);
+			args = NIL;
 			if(query->jointree->quals == NULL){
 				query->jointree->quals = (Node *) isnotempty;
 			}
@@ -1035,8 +1032,6 @@ handle_temporal_joins(List *querytrees)
 			}
 
 		}
-
-
 
 		modified_query = query;
 
