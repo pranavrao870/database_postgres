@@ -1163,23 +1163,60 @@ handle_temporal_helper(Query * query, int index)
 		return var_list;
 	}
 
-	target_num = 1;
 
 	target_list = query->targetList;
-	foreach(target_list_cell, target_list){
-		foreach(var_cell, var_list){
+	foreach(var_cell, var_list){
+		target_num = 1;
+		Var * ret_var = (Var *) copyObjectImpl((void *) lfirst_node(Var ,var_cell));
+		foreach(target_list_cell, target_list){
 			TargetEntry * target_var = lfirst(target_list_cell);
 			Var * expr = (Var *) target_var->expr;
-			Var * ret_var = (Var *) copyObjectImpl((void *) lfirst( var_cell));
-
 			if((expr->varno == ret_var->varno) && (expr->varattno == ret_var->varattno)){
 				ret_var->varno = index;
 				ret_var->varattno = target_num;
 				ret_var_list = lappend(ret_var_list, ret_var);
 			}
+			else if(expr->varno <= (query->rtable)->length){
+				RangeTblEntry * rtentry = castNode(RangeTblEntry, list_nth(query->rtable, expr->varno - 1));
+				List * joinaliasvars = rtentry->joinaliasvars;
+				if(rtentry->rtekind != 2 ){
+					target_num ++;
+					continue;
+				}
+				else if(expr->varattno <= joinaliasvars->length){
+					Var * varit = (Var *) copyObjectImpl((void*)list_nth(joinaliasvars, expr->varattno - 1));
+					if((varit->varno == ret_var->varno) && (varit->varattno == ret_var->varattno)){
+						ret_var->varno = index;
+						ret_var->varattno = target_num;
+						ret_var_list = lappend(ret_var_list, ret_var);
+					}
+				}
+			}
+			target_num ++ ;
 		}
-		target_num ++ ;
 	}
+					// target_num = 1;
+					// foreach(target_list_cell, target_list){
+					// 	TargetEntry * target_var = lfirst(target_list_cell);
+					// 	Var * expr = (Var *) target_var->expr;
+					// 	if((expr->varno == varit->varno) && (expr->varattno == varit->varattno)){
+					// 		varit->varno = index;
+					// 		varit->varattno = target_num;
+					// 		ret_var_list = lappend(ret_var_list, varit);
+					// 	}
+					// 	target_num ++ ;
+					// }
+
+					// foreach(var_item, joinaliasvars){
+					// 	Var * var = lfirst_node(Var, var_item);
+					// 	if(var->varno == varit->varno && var->varattno && varit->varattno){
+					// 		rfound = 1;
+					// 	}
+					// }
+		// 		}
+		// }
+			
+	// }
 	return ret_var_list;
 }
 
@@ -1446,8 +1483,6 @@ exec_simple_query(const char *query_string)
 
 		querytree_list = pg_analyze_and_rewrite(parsetree, query_string,
 												NULL, 0, NULL);
-		printf("Query\n");
-		print(querytree_list);
 		temporal_handled_list = handle_temporal_joins(querytree_list);
 		printf("Tempr\n");
 		print(temporal_handled_list);
