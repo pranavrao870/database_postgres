@@ -198,7 +198,7 @@ static void drop_unnamed_stmt(void);
 static void log_disconnections(int code, Datum arg);
 static void enable_statement_timeout(void);
 static void disable_statement_timeout(void);
-void removeTempCols(Node * quals, List * var_list);
+void removeTempCols(Node * quals, List * var_list, List * rtable);
 int find_cte(List * cteList, char * name);
 /* ----------------------------------------------------------------
  *		routines to obtain user input
@@ -932,7 +932,7 @@ find_cte(List * cteList, char * name)
 }
 
 void
-removeTempCols(Node * quals, List * var_list)
+removeTempCols(Node * quals, List * var_list, List * rtable)
 {
 	if(quals == NULL){
 		return;
@@ -961,8 +961,44 @@ removeTempCols(Node * quals, List * var_list)
 						}
 						if(lfound == 1 && rfound == 1){
 							*right = *left;
-							break;
+							return;
 						}
+					}
+					if(lfound == 0){
+						if(left->varno <= rtable->length){
+							RangeTblEntry * rtentry = castNode(RangeTblEntry, list_nth(rtable, left->varno - 1));
+							List * joinaliasvars = rtentry->joinaliasvars;
+							if(left->varattno <= joinaliasvars->length && rtentry->rtekind == 2){
+								Var * varit = castNode(Var, list_nth(joinaliasvars, left->varattno - 1));
+								foreach(var_item, joinaliasvars){
+									Var * var = lfirst_node(Var, var_item);
+									if(var->varno == varit->varno && var->varattno && varit->varattno){
+										lfound = 1;
+									}
+								}
+							}
+						}
+					}
+
+					if(rfound == 0){
+						if(right->varno <= rtable->length){
+							RangeTblEntry * rtentry = castNode(RangeTblEntry, list_nth(rtable, right->varno - 1));
+							List * joinaliasvars = rtentry->joinaliasvars;
+							if(right->varattno <= joinaliasvars->length && rtentry->rtekind == 2){
+								Var * varit = castNode(Var, list_nth(joinaliasvars, right->varattno - 1));
+								foreach(var_item, joinaliasvars){
+									Var * var = lfirst_node(Var, var_item);
+									if(var->varno == varit->varno && var->varattno && varit->varattno){
+										rfound = 1;
+									}
+								}
+							}
+
+						}
+					}
+					if(lfound == 1 && rfound == 1){
+						*right = *left;
+						return;
 					}
 				}
 			}
@@ -974,7 +1010,7 @@ removeTempCols(Node * quals, List * var_list)
 		ListCell * item;
 		foreach(item, boolExpr->args){
 			Node * q = lfirst(item);
-			removeTempCols(q, var_list);
+			removeTempCols(q, var_list, rtable);
 		}
 	}
 	return;
@@ -1009,11 +1045,13 @@ getTemporalAttrHelper(Node *rte, Query *query, List **var_list)
 			return;
 		}
 		else if (rtentry->rtekind == RTE_SUBQUERY){
+
 			List * ret_var_list = handle_temporal_helper(rtentry->subquery, rteref->rtindex);
 			ListCell * ret_var_cell;
 			foreach(ret_var_cell, ret_var_list){
 				*var_list = lappend(*var_list, lfirst(ret_var_cell));
 			}
+
 			return;
 		}
 		else if (rtentry->rtekind == RTE_CTE){
@@ -1033,9 +1071,9 @@ getTemporalAttrHelper(Node *rte, Query *query, List **var_list)
 		getTemporalAttrHelper(rteref->rarg, query, var_list);
 
 		if(rteref->isNatural){
-			removeTempCols(rteref->quals, *var_list);
+			removeTempCols(rteref->quals, *var_list, query->rtable);
+			printf("\nHi1\n");
 		}
-
 
 		return;
 	}
@@ -1408,9 +1446,11 @@ exec_simple_query(const char *query_string)
 
 		querytree_list = pg_analyze_and_rewrite(parsetree, query_string,
 												NULL, 0, NULL);
-
+		printf("Query\n");
+		print(querytree_list);
 		temporal_handled_list = handle_temporal_joins(querytree_list);
-
+		printf("Tempr\n");
+		print(temporal_handled_list);
 		plantree_list = pg_plan_queries(temporal_handled_list,
 										CURSOR_OPT_PARALLEL_OK, NULL);
 

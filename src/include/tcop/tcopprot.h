@@ -64,7 +64,8 @@ extern List *pg_plan_queries(List *querytrees, int cursorOptions,
 extern void getTemporalAttrHelper(Node *rte, Query *query, List **var_list);
 extern List * handle_temporal_helper(Query * query, int index);
 extern List * handle_temporal_joins(List *querytrees);
-extern List * handle_temporal_joins(List *querytrees);
+extern void removeTempCols(Node * quals, List * var_list, List * rtable);
+
 
 extern bool check_max_stack_depth(int *newval, void **extra, GucSource source);
 extern void assign_max_stack_depth(int newval, void *extra);
