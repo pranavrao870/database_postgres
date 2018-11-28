@@ -1166,8 +1166,9 @@ handle_temporal_helper(Query * query, int index)
 
 	target_list = query->targetList;
 	foreach(var_cell, var_list){
+		Var * ret_var;
 		target_num = 1;
-		Var * ret_var = (Var *) copyObjectImpl((void *) lfirst_node(Var ,var_cell));
+		ret_var = (Var *) copyObjectImpl((void *) lfirst_node(Var ,var_cell));
 		foreach(target_list_cell, target_list){
 			TargetEntry * target_var = lfirst(target_list_cell);
 			Var * expr = (Var *) target_var->expr;
